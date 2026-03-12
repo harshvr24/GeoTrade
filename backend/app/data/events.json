@@ -1,0 +1,8 @@
+[
+  {"id": "e1", "country_code": "RUS", "country_name": "Russia", "headline": "Pipeline corridor disruptions raise European energy concern", "source": "Reuters", "severity": "critical", "market_impact": "Bullish XAU/USD, bearish EUR", "timestamp": "2026-03-12T08:30:00Z"},
+  {"id": "e2", "country_code": "CHN", "country_name": "China", "headline": "New trade restrictions signal escalation in technology conflict", "source": "Bloomberg", "severity": "high", "market_impact": "Volatility increase in semiconductor equities", "timestamp": "2026-03-12T07:55:00Z"},
+  {"id": "e3", "country_code": "USA", "country_name": "United States", "headline": "Defense budget talks stall amid regional security pressure", "source": "Reuters", "severity": "medium", "market_impact": "Supports DXY and defense names", "timestamp": "2026-03-12T06:45:00Z"},
+  {"id": "e4", "country_code": "IRN", "country_name": "Iran", "headline": "Shipping lane alerts intensify around strategic strait", "source": "Bloomberg", "severity": "critical", "market_impact": "Crude oil upside risk; inflation hedges bid", "timestamp": "2026-03-12T05:15:00Z"},
+  {"id": "e5", "country_code": "DEU", "country_name": "Germany", "headline": "Emergency summit convened after cyber infrastructure alerts", "source": "Reuters", "severity": "high", "market_impact": "European risk assets pressured", "timestamp": "2026-03-12T04:20:00Z"},
+  {"id": "e6", "country_code": "TWN", "country_name": "Taiwan", "headline": "Military drills expand in nearby maritime zones", "source": "Bloomberg", "severity": "critical", "market_impact": "Boosts safe-haven demand and chip supply concerns", "timestamp": "2026-03-12T03:50:00Z"}
+]
