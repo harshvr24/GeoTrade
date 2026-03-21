@@ -1,6 +1,5 @@
 from backend.app.main import app
 from mangum import Mangum
 
-# Vercel serverless requires an ASGI-to-Lambda/serverless adapter.
-# Mangum wraps the FastAPI ASGI app into a handler Vercel can invoke.
+# Vercel serverless adapter: exposes handler for edge/serverless runtimes.
 handler = Mangum(app, lifespan="off")

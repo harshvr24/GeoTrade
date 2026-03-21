@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,7 +9,6 @@ from typing import Any
 
 import numpy as np
 from sklearn.cluster import MiniBatchKMeans
-from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 SEVERITY_WEIGHT = {"critical": 83, "high": 70, "medium": 53, "low": 24}
@@ -28,6 +28,8 @@ COUNTRY_COORDS = {
     "JPN": (36.2048, 138.2529),
 }
 ARC_TYPES = ["Military", "Sanctions", "Trade", "Diplomatic"]
+
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
 
 @dataclass
@@ -50,22 +52,15 @@ class LocalMLPipeline:
         self.market_model = self._train_market_model()
 
     def _train_market_model(self):
-        features = np.array(
-            [
-                [28, -0.1, 0, 1],
-                [41, -0.2, 1, 2],
-                [55, -0.25, 1, 3],
-                [64, -0.35, 2, 4],
-                [71, -0.45, 2, 5],
-                [78, -0.6, 3, 6],
-                [85, -0.75, 3, 8],
-            ],
-            dtype=float,
-        )
-        labels = np.array([0.18, 0.29, 0.41, 0.52, 0.64, 0.77, 0.9], dtype=float)
-        model = HistGradientBoostingRegressor(max_depth=3, learning_rate=0.08, max_iter=140, random_state=42)
-        model.fit(features, labels)
-        return model
+        """Lightweight heuristic model: no training, avoids multiprocessing."""
+
+        def predict(batch: np.ndarray) -> np.ndarray:
+            batch = np.asarray(batch, dtype=float)
+            gti, stress, regime, hotspots = batch.T
+            score = 0.35 + 0.004 * gti + 0.5 * np.abs(stress) + 0.02 * regime + 0.015 * hotspots
+            return np.clip(score, 0.0, 1.0)
+
+        return predict
 
     def load_events(self) -> list[dict[str, Any]]:
         with self.events_file.open("r", encoding="utf-8") as handle:
@@ -134,7 +129,7 @@ class LocalMLPipeline:
         cluster_stress = float(np.mean([abs(min(0.0, event.sentiment)) for event in processed]))
         active_hotspots = float(sum(event.risk_score >= 70 for event in processed))
         regime = float(max(event.narrative_cluster for event in processed))
-        vol_score = float(np.clip(self.market_model.predict(np.array([[gti, -cluster_stress, regime, active_hotspots]], dtype=float))[0], 0.0, 1.0))
+        vol_score = float(self.market_model(np.array([[gti, cluster_stress, regime, active_hotspots]], dtype=float))[0])
 
         signals = self._signals(gti, vol_score)
         countries = self._countries(processed)

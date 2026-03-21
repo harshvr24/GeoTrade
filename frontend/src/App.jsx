@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import GlobeView    from './components/GlobeView'
 import GeoMapView   from './components/GeoMapView'
 import AISignalsView from './components/AISignalsView'
@@ -23,6 +23,46 @@ function fmtTime(d) {
   return d.toUTCString().slice(17, 25) + ' UTC'
 }
 
+function normalizeDashboard(api, prev = DEMO_DATA) {
+  const base = prev ?? DEMO_DATA
+  const toClock = (ts) => {
+    if (!ts) return ''
+    const dt = new Date(ts)
+    return Number.isNaN(dt.getTime()) ? '' : dt.toISOString().slice(11, 16)
+  }
+
+  const countries = Array.isArray(api?.countries)
+    ? api.countries.map(c => ({
+        code: c.country_code,
+        name: c.country_name,
+        region: c.region,
+        risk: c.risk_score,
+        level: (c.risk_level || '').toLowerCase(),
+      }))
+    : base.countries
+
+  const events = Array.isArray(api?.events)
+    ? api.events.map(ev => ({
+        id: ev.id,
+        country: ev.country_name ?? ev.country_code,
+        region: ev.region,
+        headline: ev.headline,
+        severity: ev.severity,
+        time: ev.time ?? toClock(ev.timestamp),
+        source: ev.source,
+      }))
+    : base.events
+
+  return {
+    ...base,
+    gti: api?.gti ?? base.gti,
+    gti_delta: api?.gti_delta ?? base.gti_delta,
+    last_updated: api?.last_updated ?? base.last_updated,
+    countries,
+    events,
+  }
+}
+
 export default function App() {
   const [activeView,   setActiveView]   = useState('Earth Pulse')
   const [showWaitlist, setShowWaitlist] = useState(false)
@@ -39,11 +79,10 @@ export default function App() {
         if (!res.ok) throw new Error()
         const json = await res.json()
         if (!alive) return
-        // Merge API signals format into our richer demo format
-        // (API returns simplified signals; we keep demo data for full UI)
+        setData(prev => normalizeDashboard(json, prev))
         setUsingDemo(false)
       } catch {
-        // Keep demo data — this is expected in dev without backend
+        // Keep demo data in dev without backend
       }
     }
     load()

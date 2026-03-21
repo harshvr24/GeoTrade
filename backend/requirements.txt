@@ -1,6 +1,11 @@
+--extra-index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple
+--extra-index-url https://pydantic.github.io/pydantic-core-wheels/simple
 fastapi==0.115.6
 uvicorn==0.32.1
-pydantic==2.12.5
+pydantic==2.13.0b2
 numpy==2.4.3
-scikit-learn==1.8.0
+scipy==1.18.0.dev0
+scikit-learn==1.9.dev0
+joblib==1.5.3
+threadpoolctl==3.6.0
 mangum==0.17.0

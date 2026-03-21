@@ -1,12 +1,19 @@
+from datetime import datetime, timezone
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timezone
 
 from .ml.pipeline import LocalMLPipeline
 from .schemas import (
-    DashboardResponse, WaitlistRequest, WaitlistResponse,
-    PortfolioResponse, FeedsResponse, Position, Portfolio, PortfolioMetrics,
-    FeedEvent
+    DashboardResponse,
+    WaitlistRequest,
+    WaitlistResponse,
+    PortfolioResponse,
+    FeedsResponse,
+    Position,
+    Portfolio,
+    PortfolioMetrics,
+    FeedEvent,
 )
 
 app = FastAPI(title="GeoTrade API", version="2.0.0")
@@ -59,8 +66,8 @@ def waitlist(payload: WaitlistRequest) -> dict[str, str | bool]:
 def get_portfolio() -> dict:
     """Get current portfolio positions and metrics."""
     portfolio_data = {
-        "total_value": 145280.50,
-        "total_pnl": 3241.20,
+        "total_value": 145_280.50,
+        "total_pnl": 3_241.20,
         "total_pnl_pct": 2.23,
         "positions": [
             {
@@ -98,7 +105,7 @@ def get_portfolio() -> dict:
             "avg_loss": -142.30,
         },
     }
-    
+
     return {
         "portfolio": portfolio_data,
         "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
@@ -134,10 +141,9 @@ def get_feeds() -> dict:
             "sentiment": -0.62,
         },
     ]
-    
+
     return {
         "feeds": feeds_data,
         "total_count": len(feeds_data),
         "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
     }
-
