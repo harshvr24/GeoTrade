@@ -1,5 +1,3 @@
-*Note:* The GeoTrade repository itself was not accessible via the connected sources, so the README below is inferred from the project description and similar open-source dashboards【37†L260-L268】【34†L471-L480】.
-
 # GeoTrade
 
 GeoTrade is a global intelligence dashboard that ingests real-time geopolitical news and visualises its impact on trade and markets. It aggregates live news feeds from around the world, applies AI/NLP analysis to summarize the key insights, and plots events on an interactive world map. For example, comparable projects collect hundreds of curated news feeds and overlay them on a globe or flat map【34†L471-L480】【37†L260-L268】. GeoTrade’s interface likely allows users to track supply chain disruptions, trade policy changes, and economic indicators in a unified view.
