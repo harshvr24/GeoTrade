@@ -119,3 +119,30 @@ class FeedsResponse(BaseModel):
     feeds: List[FeedEvent]
     total_count: int
     last_updated: str
+
+
+class MarketItem(BaseModel):
+    symbol: str
+    name: str
+    price: float
+    change_pct: float
+    volume: Optional[float] = None
+    sector: Optional[str] = None
+
+
+class NewsItem(BaseModel):
+    id: str
+    headline: str
+    source: str
+    timestamp: str
+    severity: str
+    impact: str
+    sentiment: float
+
+
+class CountryDetail(BaseModel):
+    country: CountryRisk
+    events: List[EventItem]
+    markets: List[MarketItem]
+    news: List[NewsItem]
+    signals: List[TradingSignal]

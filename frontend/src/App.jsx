@@ -5,6 +5,7 @@ import AISignalsView from './components/AISignalsView'
 import PortfolioView from './components/PortfolioView'
 import LiveFeedsView from './components/LiveFeedsView'
 import WaitlistModal from './components/WaitlistModal'
+import CountryDrawer from './components/CountryDrawer'
 import { DEMO_DATA } from './data'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -68,6 +69,9 @@ export default function App() {
   const [showWaitlist, setShowWaitlist] = useState(false)
   const [data,         setData]         = useState(DEMO_DATA)
   const [usingDemo,    setUsingDemo]    = useState(true)
+  const [countryCode,  setCountryCode]  = useState(null)
+  const [countryDetail,setCountryDetail]= useState(null)
+  const [countryLoading,setCountryLoading] = useState(false)
   const clock = useClock()
 
   // Try to load live data from API, fall back to demo
@@ -89,6 +93,21 @@ export default function App() {
     const t = setInterval(load, 30000)
     return () => { alive = false; clearInterval(t) }
   }, [])
+
+  const fetchCountry = async (code) => {
+    if (!code) return
+    setCountryLoading(true)
+    try {
+      const res = await fetch(`${API_BASE}/api/country/${code}`)
+      if (!res.ok) throw new Error()
+      const json = await res.json()
+      setCountryDetail(json)
+    } catch {
+      setCountryDetail(null)
+    } finally {
+      setCountryLoading(false)
+    }
+  }
 
   const focusSignal = data.signals[0]
 
@@ -152,7 +171,11 @@ export default function App() {
             countries={data.countries}
             signals={data.signals}
             focusSignal={focusSignal}
-            onCountryClick={() => {}}
+            onCountryClick={(c) => {
+              const code = c.country_code || c.code
+              setCountryCode(code)
+              fetchCountry(code)
+            }}
           />
         )}
         {activeView === 'Geo Map' && (
@@ -212,6 +235,13 @@ export default function App() {
       {showWaitlist && (
         <WaitlistModal onClose={() => setShowWaitlist(false)} />
       )}
+
+      <CountryDrawer
+        detail={countryDetail}
+        loading={countryLoading}
+        onClose={() => { setCountryCode(null); setCountryDetail(null); }}
+        key={countryCode || 'drawer'}
+      />
     </div>
   )
 }

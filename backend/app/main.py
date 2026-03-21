@@ -14,6 +14,9 @@ from .schemas import (
     Portfolio,
     PortfolioMetrics,
     FeedEvent,
+    CountryDetail,
+    MarketItem,
+    NewsItem,
 )
 
 app = FastAPI(title="GeoTrade API", version="2.0.0")
@@ -38,7 +41,36 @@ def dashboard() -> dict:
     return pipeline.process()
 
 
-@app.get("/api/country/{country_code}")
+COUNTRY_MARKETS: dict[str, list[dict[str, object]]] = {
+    "USA": [
+        {"symbol": "SPX", "name": "S&P 500", "price": 5299.6, "change_pct": -0.18, "sector": "Equities"},
+        {"symbol": "NQ", "name": "Nasdaq 100", "price": 18244.3, "change_pct": -0.32, "sector": "Equities"},
+        {"symbol": "WTI", "name": "WTI Crude", "price": 82.16, "change_pct": 0.95, "sector": "Commodities"},
+    ],
+    "IRN": [
+        {"symbol": "WTI", "name": "WTI Crude", "price": 82.16, "change_pct": 0.95, "sector": "Commodities"},
+        {"symbol": "XAU", "name": "Gold", "price": 2314.6, "change_pct": 1.2, "sector": "Commodities"},
+    ],
+    "DEU": [
+        {"symbol": "DAX", "name": "DAX 40", "price": 17890.2, "change_pct": -0.42, "sector": "Equities"},
+        {"symbol": "EURUSD", "name": "EUR/USD", "price": 1.0821, "change_pct": -0.14, "sector": "FX"},
+    ],
+    "CHN": [
+        {"symbol": "HSI", "name": "Hang Seng", "price": 16980.4, "change_pct": -0.28, "sector": "Equities"},
+        {"symbol": "CSI300", "name": "CSI 300", "price": 3510.2, "change_pct": -0.35, "sector": "Equities"},
+    ],
+    "ISR": [
+        {"symbol": "TA35", "name": "TA-35", "price": 1765.1, "change_pct": -0.51, "sector": "Equities"},
+        {"symbol": "USDILS", "name": "USD/ILS", "price": 3.72, "change_pct": 0.22, "sector": "FX"},
+    ],
+    "TWN": [
+        {"symbol": "TAIEX", "name": "TAIEX", "price": 20412.7, "change_pct": -0.18, "sector": "Equities"},
+        {"symbol": "SOX", "name": "PHLX Semi", "price": 5075.4, "change_pct": -0.62, "sector": "Equities"},
+    ],
+}
+
+
+@app.get("/api/country/{country_code}", response_model=CountryDetail)
 def country(country_code: str) -> dict:
     data = pipeline.process()
     code = country_code.upper()
@@ -47,9 +79,28 @@ def country(country_code: str) -> dict:
     if not country_data or not country_events:
         raise HTTPException(status_code=404, detail="Country not found")
 
+    markets = [
+        MarketItem(**m).model_dump()
+        for m in COUNTRY_MARKETS.get(code, [{"symbol": code, "name": country_data["country_name"], "price": 0.0, "change_pct": 0.0}])
+    ]
+    news = [
+        NewsItem(
+            id=ev["id"],
+            headline=ev["headline"],
+            source=ev["source"],
+            timestamp=ev["timestamp"],
+            severity=ev["severity"],
+            impact=ev["market_impact"],
+            sentiment=ev.get("sentiment", 0.0),
+        ).model_dump()
+        for ev in country_events
+    ]
+
     return {
         "country": country_data,
         "events": country_events,
+        "markets": markets,
+        "news": news,
         "signals": data["signals"],
     }
 
