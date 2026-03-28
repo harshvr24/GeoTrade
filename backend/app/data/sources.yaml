@@ -1,0 +1,15 @@
+- id: reuters-business
+  type: rss
+  url: https://feeds.reuters.com/reuters/businessNews
+- id: bloomberg-markets
+  type: rss
+  url: https://feeds.bloomberg.com/markets/news.rss
+- id: bbc-world
+  type: rss
+  url: http://feeds.bbc.co.uk/news/world/rss.xml
+- id: ap-world
+  type: rss
+  url: https://apnews.com/hub/ap-top-news?output=atom
+- id: ft-global
+  type: rss
+  url: https://feeds.ft.com/a/global
