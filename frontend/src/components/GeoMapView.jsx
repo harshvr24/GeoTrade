@@ -6,13 +6,26 @@ import { DEMO_DATA } from '../data'
 
 const ASSETS = ['OIL', 'GAS', 'S&P500']
 
+// CII risk level colors
+const CII_COLORS = {
+  Critical: '#ef4444',
+  High:     '#f97316',
+  Medium:   '#3b82f6',
+  Low:      '#22c55e',
+}
+
 export default function GeoMapView({ countries, chartData, onCountrySelect }) {
   const [selectedCountry, setSelectedCountry] = useState(null)
   const [selectedAsset,   setSelectedAsset]   = useState(null)
   const [filterLevel,     setFilterLevel]      = useState('all')
   const [layers, setLayers] = useState([])
-  const [activeLayers, setActiveLayers] = useState(new Set())
+  const [activeLayers, setActiveLayers] = useState(new Set(['conflicts', 'cii']))
   const [marketHints, setMarketHints] = useState({})
+
+  // CII and intelligence data
+  const [ciiData, setCiiData] = useState(null)
+  const [convergenceData, setConvergenceData] = useState([])
+  const [anomalyData, setAnomalyData] = useState([])
 
   const chartRef  = useRef(null)
   const [chartSize, setChartSize] = useState({ w: 600, h: 280 })
@@ -40,6 +53,7 @@ export default function GeoMapView({ countries, chartData, onCountrySelect }) {
       setLayers(res.layers || [])
       setActiveLayers(new Set((res.layers || []).filter(l => l.enabled).map(l => l.id)))
     }).catch(() => {})
+
     // Build simple market hint map from demo portfolio/signals
     const hints = {}
     DEMO_DATA.signals.forEach(s => {
@@ -52,11 +66,34 @@ export default function GeoMapView({ countries, chartData, onCountrySelect }) {
       }
     })
     countries.forEach(c => {
-      // attach a generic predicted move
       const sig = DEMO_DATA.signals.find(s => s.action === 'BUY') || DEMO_DATA.signals[0]
       hints[c.code] = hints[c.code] || { asset: sig?.asset, price: sig?.price, change: sig?.changeP }
     })
     setMarketHints(hints)
+  }, [])
+
+  // Fetch CII, convergence, and anomaly data
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const [ciiRes, convRes, anomRes] = await Promise.all([
+          apiV2.ciiAll().catch(() => null),
+          apiV2.convergence().catch(() => ({ convergence_alerts: [] })),
+          apiV2.anomalies().catch(() => ({ anomalies: [] })),
+        ])
+        if (!cancelled) {
+          setCiiData(ciiRes)
+          setConvergenceData(convRes?.convergence_alerts || [])
+          setAnomalyData(anomRes?.anomalies || [])
+        }
+      } catch {
+        // silently fail — intelligence is enhancement only
+      }
+    }
+    load()
+    const interval = setInterval(load, 60000)
+    return () => { cancelled = true; clearInterval(interval) }
   }, [])
 
   const toggleLayer = (id) => {
@@ -64,6 +101,44 @@ export default function GeoMapView({ countries, chartData, onCountrySelect }) {
     if (next.has(id)) next.delete(id); else next.add(id)
     setActiveLayers(next)
   }
+
+  // Merge CII data into country display
+  const countriesWithCii = (() => {
+    if (!ciiData?.countries) return filteredCountries
+    const ciiMap = {}
+    ciiData.countries.forEach(c => {
+      ciiMap[c.code] = c
+    })
+    return filteredCountries.map(c => ({
+      ...c,
+      cii_score: ciiMap[c.code]?.score ?? c.risk,
+      cii_level: ciiMap[c.code]?.risk_level ?? c.level,
+      cii_trend: ciiMap[c.code]?.trend ?? 'stable',
+    }))
+  })()
+
+  // Check if a country has an anomaly
+  const anomalyMap = {}
+  ;(anomalyData || []).forEach(a => {
+    // Map anomaly region to country codes (rough approximation)
+    const regionToCodes = {
+      'middle_east': ['IRN', 'ISR', 'SAU', 'YEM', 'LBN', 'SYR', 'IRQ', 'JOR'],
+      'eastern_europe': ['RUS', 'UKR', 'BLR', 'POL'],
+      'western_europe': ['DEU', 'FRA', 'GBR', 'ITA', 'ESP'],
+      'east_asia': ['CHN', 'TWN', 'JPN', 'PRK', 'KOR'],
+      'south_asia': ['IND', 'PAK', 'BGD'],
+      'north_america': ['USA', 'CAN', 'MEX'],
+      'sub_saharan_africa': ['NGA', 'ZAF', 'KEN', 'ETH', 'SOM', 'SDN'],
+    }
+    for (const [region, codes] of Object.entries(regionToCodes)) {
+      if (a.region === region) {
+        codes.forEach(code => {
+          if (!anomalyMap[code]) anomalyMap[code] = []
+          anomalyMap[code].push(a)
+        })
+      }
+    }
+  })
 
   return (
     <div className="geomap-layout">
@@ -102,10 +177,15 @@ export default function GeoMapView({ countries, chartData, onCountrySelect }) {
 
         <div className="choropleth-map">
           <ChoroplethMap
-            countries={filteredCountries}
-            onCountryClick={(c) => { setSelectedCountry(c); onCountrySelect && onCountrySelect(c.code) }}
+            countries={countriesWithCii}
+            onCountryClick={(c) => {
+              setSelectedCountry(c)
+              onCountrySelect && onCountrySelect(c.code)
+            }}
             selectedCode={selectedCountry?.code}
             marketHints={marketHints}
+            colorMode={activeLayers.has('cii') ? 'cii' : 'risk'}
+            ciiColors={CII_COLORS}
           />
         </div>
 
@@ -113,13 +193,75 @@ export default function GeoMapView({ countries, chartData, onCountrySelect }) {
           <div className="map-info-card">
             <div className="map-info-header">
               <span className="map-info-name">{selectedCountry.name}</span>
-              <span className={`map-info-pill ${selectedCountry.level}`}>{selectedCountry.level}</span>
+              <span className={`map-info-pill ${selectedCountry.level || selectedCountry.cii_level}`}>
+                {activeLayers.has('cii') && selectedCountry.cii_level
+                  ? `CII ${selectedCountry.cii_score?.toFixed(1) || '—'}`
+                  : selectedCountry.level}
+              </span>
+              {selectedCountry.cii_trend && selectedCountry.cii_trend !== 'stable' && (
+                <span className={`cii-trend ${selectedCountry.cii_trend}`}>
+                  {selectedCountry.cii_trend === 'rising' ? '↑' : '↓'}
+                </span>
+              )}
             </div>
             <div className="map-info-meta">
               <span>{selectedCountry.region}</span>
-              <span>Risk {selectedCountry.risk}</span>
+              <span>Risk {selectedCountry.risk ?? selectedCountry.cii_score ?? '—'}</span>
               <span>Events {selectedCountry.event_count ?? selectedCountry.eventCount ?? 1}</span>
             </div>
+            {/* CII breakdown */}
+            {ciiData?.countries && (() => {
+              const myCii = ciiData.countries.find(c => c.code === selectedCountry.code)
+              if (!myCii) return null
+              return (
+                <div className="cii-breakdown">
+                  <div className="cii-breakdown-title">CII Components</div>
+                  <div className="cii-breakdown-row">
+                    <span>Baseline</span>
+                    <div className="cii-bar-bg">
+                      <div className="cii-bar-fill" style={{ width: `${myCii.components?.baseline / 40 * 100 || 0}%` }} />
+                    </div>
+                    <span>{myCii.components?.baseline?.toFixed(1) || 0}</span>
+                  </div>
+                  <div className="cii-breakdown-row">
+                    <span>Unrest</span>
+                    <div className="cii-bar-bg">
+                      <div className="cii-bar-fill unrest" style={{ width: `${myCii.components?.unrest / 40 * 100 || 0}%` }} />
+                    </div>
+                    <span>{myCii.components?.unrest?.toFixed(1) || 0}</span>
+                  </div>
+                  <div className="cii-breakdown-row">
+                    <span>Security</span>
+                    <div className="cii-bar-bg">
+                      <div className="cii-bar-fill security" style={{ width: `${myCii.components?.security / 40 * 100 || 0}%` }} />
+                    </div>
+                    <span>{myCii.components?.security?.toFixed(1) || 0}</span>
+                  </div>
+                  <div className="cii-breakdown-row">
+                    <span>Velocity</span>
+                    <div className="cii-bar-bg">
+                      <div className="cii-bar-fill velocity" style={{ width: `${myCii.components?.velocity / 40 * 100 || 0}%` }} />
+                    </div>
+                    <span>{myCii.components?.velocity?.toFixed(1) || 0}</span>
+                  </div>
+                  {myCii.floor_applied && (
+                    <div className="cii-floor-notice">Conflict floor applied</div>
+                  )}
+                </div>
+              )
+            })()}
+            {/* Anomaly alerts for this country/region */}
+            {anomalyMap[selectedCountry.code]?.length > 0 && (
+              <div className="anomaly-alert-card">
+                <div className="anomaly-alert-title">⚡ Anomalies Detected</div>
+                {anomalyMap[selectedCountry.code].slice(0, 2).map((a, i) => (
+                  <div key={i} className="anomaly-alert-item">
+                    <span className={`anomaly-severity-tag ${a.severity}`}>{a.severity}</span>
+                    {a.message}
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="map-info-summary">
               {selectedCountry.summary || 'No summary available'}
             </div>
@@ -133,14 +275,37 @@ export default function GeoMapView({ countries, chartData, onCountrySelect }) {
           </div>
         )}
 
-        <div className="map-bottom-bar">
-          <div className="map-legend">
-            {[['critical','#ef4444'],['high','#f97316'],['medium','#3b82f6'],['low','#22c55e']].map(([l,c]) => (
-              <div key={l} className="map-legend-item">
-                <span className="map-legend-dot" style={{ background: c }} />
-                {l.charAt(0).toUpperCase()+l.slice(1)}
+        {/* Convergence alerts overlay */}
+        {activeLayers.has('convergence') && convergenceData.length > 0 && (
+          <div className="convergence-overlay">
+            <div className="convergence-overlay-title">Convergence Zones</div>
+            {convergenceData.slice(0, 5).map((c, i) => (
+              <div key={i} className="convergence-zone-item">
+                <span className={`convergence-severity-dot ${c.severity}`} />
+                <span className="convergence-zone-name">{c.name}</span>
+                <span className="convergence-zone-score">{c.score}</span>
+                <span className="convergence-zone-types">{c.signal_types?.join(', ')}</span>
               </div>
             ))}
+          </div>
+        )}
+
+        <div className="map-bottom-bar">
+          <div className="map-legend">
+            {activeLayers.has('cii')
+              ? [['Critical','#ef4444'],['High','#f97316'],['Medium','#3b82f6'],['Low','#22c55e']].map(([l,c]) => (
+                  <div key={l} className="map-legend-item">
+                    <span className="map-legend-dot" style={{ background: c }} />
+                    {l}
+                  </div>
+                ))
+              : [['critical','#ef4444'],['high','#f97316'],['medium','#3b82f6'],['low','#22c55e']].map(([l,c]) => (
+                  <div key={l} className="map-legend-item">
+                    <span className="map-legend-dot" style={{ background: c }} />
+                    {l.charAt(0).toUpperCase()+l.slice(1)}
+                  </div>
+                ))
+            }
           </div>
           {selectedCountry && (
             <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--cyan)' }}>
@@ -153,7 +318,6 @@ export default function GeoMapView({ countries, chartData, onCountrySelect }) {
       {/* Right: asset chart */}
       <div className="chart-section">
         <div className="chart-top">
-          {/* Asset tabs */}
           <div className="asset-tabs">
             {ASSETS.map(a => {
               const d = chartData[a]
@@ -197,7 +361,6 @@ export default function GeoMapView({ countries, chartData, onCountrySelect }) {
         <div className="chart-footer">
           {selectedAsset && (
             <>
-              {/* OHLC summary */}
               <div style={{ display: 'flex', gap: 24, fontSize: 11, fontFamily: 'JetBrains Mono, monospace', color: 'var(--muted)' }}>
                 {(() => {
                   const c = asset.candles

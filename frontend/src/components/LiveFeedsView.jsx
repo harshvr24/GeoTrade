@@ -1,8 +1,48 @@
 import { useState, useMemo } from 'react'
+import { apiV2 } from '../api/v2'
+
+const SEVERITY_COLOR = {
+  critical: '#ff4444',
+  high:     '#ff8c00',
+  medium:   '#4488ff',
+  low:      '#00e676',
+}
+
+const TIER_COLOR = {
+  1: 'var(--green)',
+  2: 'var(--cyan)',
+  3: 'var(--blue)',
+  4: 'var(--orange)',
+}
+
+const TIER_LABEL = {
+  1: 'Tier 1',
+  2: 'Tier 2',
+  3: 'Tier 3',
+  4: 'Tier 4',
+}
 
 export default function LiveFeedsView({ feeds }) {
-  const [selectedRegion, setSelectedRegion] = useState('all')
-  const [severityFilter, setSeverityFilter] = useState('all')
+  const [selectedRegion,  setSelectedRegion]  = useState('all')
+  const [severityFilter, setSeverityFilter]  = useState('all')
+  const [tierFilter,     setTierFilter]      = useState('all')
+
+  // Enrich feeds with source tier and state-affiliated info
+  const [sourceMeta, setSourceMeta] = useState({ tiers: {}, stateAffil: {} })
+
+  // Fetch source metadata
+  useMemo(() => {
+    apiV2.sources().then(res => {
+      const tiers = {}
+      const stateAffil = {}
+      ;(res.sources || []).forEach(s => {
+        const key = s.id || s.url || s.name
+        tiers[key] = s.tier
+        if (s.state_affiliated) stateAffil[key] = s.state
+      })
+      setSourceMeta({ tiers, stateAffil })
+    }).catch(() => {})
+  }, [])
 
   const regions = useMemo(() => {
     const r = new Set(['all', ...feeds.map(f => f.region)])
@@ -11,17 +51,35 @@ export default function LiveFeedsView({ feeds }) {
 
   const filtered = useMemo(() => {
     return feeds.filter(f => {
-      const regionMatch = selectedRegion === 'all' || f.region === selectedRegion
+      const regionMatch  = selectedRegion  === 'all' || f.region === selectedRegion
       const severityMatch = severityFilter === 'all' || f.severity === severityFilter
-      return regionMatch && severityMatch
+      // Tier filter: look up by source name
+      let tierMatch = tierFilter === 'all'
+      if (!tierMatch && sourceMeta.tiers) {
+        const key = Object.keys(sourceMeta.tiers).find(k =>
+          f.source && (k.includes(f.source.toLowerCase()) || f.source.toLowerCase().includes(k))
+        )
+        const feedTier = key ? sourceMeta.tiers[key] : null
+        tierMatch = feedTier === parseInt(tierFilter)
+      }
+      return regionMatch && severityMatch && tierMatch
     })
-  }, [feeds, selectedRegion, severityFilter])
+  }, [feeds, selectedRegion, severityFilter, tierFilter, sourceMeta])
 
-  const severityColor = {
-    critical: '#ff4444',
-    high: '#ff8c00',
-    medium: '#4488ff',
-    low: '#00e676',
+  const getTierForFeed = (feed) => {
+    if (!sourceMeta.tiers || !feed.source) return null
+    const key = Object.keys(sourceMeta.tiers).find(k =>
+      k.includes(feed.source.toLowerCase()) || feed.source.toLowerCase().includes(k)
+    )
+    return key ? sourceMeta.tiers[key] : null
+  }
+
+  const isStateAffiliated = (feed) => {
+    if (!sourceMeta.stateAffil || !feed.source) return false
+    const key = Object.keys(sourceMeta.stateAffil).find(k =>
+      k.includes(feed.source.toLowerCase()) || feed.source.toLowerCase().includes(k)
+    )
+    return !!key
   }
 
   const formatTime = (timestamp) => {
@@ -67,8 +125,26 @@ export default function LiveFeedsView({ feeds }) {
               className={`filter-option ${severityFilter === s ? 'active' : ''}`}
               onClick={() => setSeverityFilter(s)}
             >
-              <span className="filter-dot" style={{ background: severityColor[s] }} />
+              <span className="filter-dot" style={{ background: SEVERITY_COLOR[s] }} />
               {s === 'all' ? 'All Levels' : s.charAt(0).toUpperCase() + s.slice(1)}
+            </button>
+          ))}
+        </div>
+
+        <div className="filter-divider" />
+
+        <div className="filter-section">
+          <div className="filter-label">Source Tier</div>
+          {['all', '1', '2', '3', '4'].map(t => (
+            <button
+              key={t}
+              className={`filter-option ${tierFilter === t ? 'active' : ''}`}
+              onClick={() => setTierFilter(t)}
+            >
+              {t === 'all'
+                ? <><span className="filter-dot" style={{ background: 'var(--muted)' }} />All Tiers</>
+                : <><span className="filter-dot" style={{ background: TIER_COLOR[t] || 'var(--muted)' }} />{TIER_LABEL[t]}</>
+              }
             </button>
           ))}
         </div>
@@ -79,6 +155,12 @@ export default function LiveFeedsView({ feeds }) {
           <div>🟠 High: Significant effects</div>
           <div>🔵 Medium: Moderate shifts</div>
           <div>🟢 Low: Limited influence</div>
+          <div style={{ marginTop: 6 }}>
+            <span style={{ color: 'var(--green)' }}>●</span> Tier 1: Premium (Reuters, AP, BBC)<br />
+            <span style={{ color: 'var(--cyan)' }}>●</span> Tier 2: Standard (Bloomberg, FT)<br />
+            <span style={{ color: 'var(--blue)' }}>●</span> Tier 3: Analytical (CSIS, Crisis Group)<br />
+            <span style={{ color: 'var(--orange)' }}>●</span> Tier 4: State/investigative
+          </div>
         </div>
       </div>
 
@@ -103,40 +185,76 @@ export default function LiveFeedsView({ feeds }) {
               <div style={{ fontSize: 11, color: 'var(--muted)' }}>Adjust filters to see more events</div>
             </div>
           ) : (
-            filtered.map((feed, i) => (
-              <div key={feed.id} className="feed-item">
-                <div className="feed-left">
-                  <div className="feed-severity" style={{ background: severityColor[feed.severity] }}>
-                    <span style={{ fontSize: 10, fontWeight: 700 }}>
-                      {feed.severity.charAt(0).toUpperCase()}
-                    </span>
-                  </div>
-                </div>
+            filtered.map((feed, i) => {
+              const tier = getTierForFeed(feed)
+              const isState = isStateAffiliated(feed)
+              const anomalyBadge = feed.anomaly_flag || feed.anomaly_zscore
+              const focalBadge = feed.focal_point
 
-                <div className="feed-center">
-                  <div className="feed-headline">{feed.headline}</div>
-                  
-                  <div className="feed-meta">
-                    <span className="feed-region">{feed.region}</span>
-                    <span className="feed-source">{feed.source}</span>
-                    <span className="feed-impact">{feed.impact}</span>
+              return (
+                <div key={feed.id} className={`feed-item ${feed.severity === 'critical' ? 'feed-item--critical' : ''}`}>
+                  <div className="feed-left">
+                    <div className="feed-severity" style={{ background: SEVERITY_COLOR[feed.severity] }}>
+                      <span style={{ fontSize: 10, fontWeight: 700 }}>
+                        {feed.severity.charAt(0).toUpperCase()}
+                      </span>
+                    </div>
                   </div>
 
-                  <div className="feed-countries">
-                    {feed.countries.map(c => (
-                      <span key={c} className="feed-country-tag">{c}</span>
-                    ))}
-                  </div>
-                </div>
+                  <div className="feed-center">
+                    <div className="feed-headline">{feed.headline}</div>
 
-                <div className="feed-right">
-                  <div className="feed-time">{formatTime(feed.timestamp)}</div>
-                  <div className={`feed-sentiment ${feed.sentiment < -0.3 ? 'neg' : feed.sentiment > 0.3 ? 'pos' : 'neu'}`}>
-                    {feed.sentiment < 0 ? '📉' : feed.sentiment > 0 ? '📈' : '➡️'}
+                    <div className="feed-meta">
+                      <span className="feed-region">{feed.region}</span>
+                      <span className="feed-source">
+                        {feed.source}
+                        {/* State-affiliated warning tag */}
+                        {isState && (
+                          <span className="state-warning-tag" title={`State-affiliated: ${sourceMeta.stateAffil[Object.keys(sourceMeta.stateAffil).find(k => k.includes(feed.source?.toLowerCase() || '') || (feed.source?.toLowerCase() || '').includes(k))] || 'Unknown'}`}>
+                            ⚠
+                          </span>
+                        )}
+                      </span>
+                      <span className="feed-impact">{feed.impact}</span>
+                      {/* Source tier badge */}
+                      {tier && (
+                        <span
+                          className="tier-badge"
+                          style={{ background: TIER_COLOR[tier], color: tier <= 2 ? '#000' : '#fff', fontSize: 9 }}
+                        >
+                          T{tier}
+                        </span>
+                      )}
+                      {/* Anomaly badge */}
+                      {anomalyBadge && (
+                        <span className="intel-badge intel-badge--anomaly" title="Anomaly detected in this region">
+                          ⚡{typeof anomalyBadge === 'number' ? ` z=${anomalyBadge}` : ''}
+                        </span>
+                      )}
+                      {/* Focal point badge */}
+                      {focalBadge && (
+                        <span className="intel-badge intel-badge--focal" title="Focal point entity">
+                          ◉ focal
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="feed-countries">
+                      {feed.countries.map(c => (
+                        <span key={c} className="feed-country-tag">{c}</span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="feed-right">
+                    <div className="feed-time">{formatTime(feed.timestamp)}</div>
+                    <div className={`feed-sentiment ${feed.sentiment < -0.3 ? 'neg' : feed.sentiment > 0.3 ? 'pos' : 'neu'}`}>
+                      {feed.sentiment < 0 ? '📉' : feed.sentiment > 0 ? '📈' : '➡️'}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))
+              )
+            })
           )}
         </div>
       </div>

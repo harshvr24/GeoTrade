@@ -424,10 +424,17 @@ async def stream_updates_v2(websocket: WebSocket) -> None:
                     "signals": data.get("signals", []),
                     "countries": data.get("countries", []),
                     "gti": data.get("gti", 0),
+                    "gti_delta": data.get("gti_delta", 0),
                     "last_updated": data.get("last_updated"),
+                    # World Monitor intelligence payload
+                    "cii_scores": data.get("cii_scores", []),
+                    "anomalies": data.get("anomalies", []),
+                    "focal_points": data.get("focal_points", []),
+                    "convergence_alerts": data.get("convergence_alerts", []),
+                    "source_tier_summary": data.get("source_tier_summary", {}),
                 },
             })
-            await asyncio.sleep(8)
+            await asyncio.sleep(12)
     except WebSocketDisconnect:
         return
     except Exception:

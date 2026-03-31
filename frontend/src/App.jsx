@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import GlobeView    from './components/GlobeView'
-import GeoMapView   from './components/GeoMapView'
-import AISignalsView from './components/AISignalsView'
-import PortfolioView from './components/PortfolioView'
-import LiveFeedsView from './components/LiveFeedsView'
-import WaitlistModal from './components/WaitlistModal'
-import CountryDrawer from './components/CountryDrawer'
+import GlobeView       from './components/GlobeView'
+import GeoMapView      from './components/GeoMapView'
+import AISignalsView  from './components/AISignalsView'
+import IntelligencePanel from './components/IntelligencePanel'
+import PortfolioView  from './components/PortfolioView'
+import LiveFeedsView  from './components/LiveFeedsView'
+import WaitlistModal  from './components/WaitlistModal'
+import CountryDrawer  from './components/CountryDrawer'
 import TradingSignalsPanel from './components/TradingSignalsPanel'
 import GeopoliticalIndexPanel from './components/GeopoliticalIndexPanel'
 import MarketImpactPanel from './components/MarketImpactPanel'
@@ -16,7 +17,11 @@ const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 const WS_URL   = import.meta.env.VITE_WS_URL
   || (API_BASE ? API_BASE.replace(/^http/i, 'ws') + '/ws/stream'
                : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/stream`)
-const VIEWS    = ['Earth Pulse', 'Geo Map', 'AI Signals', 'Trading Signals', 'Geo Risk Index', 'Market Impact', 'Portfolio', 'Live Feeds', 'Widgets']
+const WS_V2_URL = import.meta.env.VITE_WS_V2_URL
+  || (API_BASE ? API_BASE.replace(/^http/i, 'ws') + '/ws/stream/v2'
+               : `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/stream/v2`)
+
+const VIEWS    = ['Earth Pulse', 'Geo Map', 'AI Signals', 'Intelligence', 'Trading Signals', 'Geo Risk Index', 'Market Impact', 'Portfolio', 'Live Feeds', 'Widgets']
 
 const computeSummary = (signals = []) => {
   const total = signals.length
@@ -59,6 +64,13 @@ const normalizeSignals = (apiSignals = [], prev = []) => {
       riskAmount: s.risk_amount ?? (entryNum ? +(entryNum * 0.02).toFixed(3) : 0),
       rewardAmount: s.reward_amount ?? (entryNum ? +(entryNum * 0.04).toFixed(3) : 0),
       riskFlags: s.risk_flags || s.riskFlags || [],
+      // Intelligence metadata
+      source_tier: s.source_tier ?? null,
+      state_affiliated: s.state_affiliated ?? false,
+      anomaly_flag: s.anomaly_flag ?? false,
+      focal_point: s.focal_point ?? false,
+      cii_score: s.cii_score ?? null,
+      cii_level: s.cii_level ?? null,
     }
   })
 }
@@ -197,6 +209,17 @@ export default function App() {
   const [countryDetail,setCountryDetail]= useState(null)
   const [countryLoading,setCountryLoading] = useState(false)
   const [liveStatus, setLiveStatus] = useState('idle')
+
+  // Intelligence state from WebSocket v2
+  const [intelligence, setIntelligence] = useState({
+    cii_scores: [],
+    anomalies: [],
+    focal_points: [],
+    convergence_alerts: [],
+    source_tier_summary: {},
+  })
+  const [intelStatus, setIntelStatus] = useState('idle')
+
   const clock = useClock()
 
   // Try to load live data from API, fall back to demo
@@ -227,7 +250,7 @@ export default function App() {
     return () => { alive = false; clearInterval(t) }
   }, [])
 
-  // Live updates via WebSocket
+  // Live updates via WebSocket v1
   useEffect(() => {
     let ws
     let retry
@@ -265,6 +288,45 @@ export default function App() {
     }
   }, [])
 
+  // Intelligence updates via WebSocket v2
+  useEffect(() => {
+    let ws
+    let retry
+
+    const connect = () => {
+      ws = new WebSocket(WS_V2_URL)
+      ws.onopen = () => setIntelStatus('live')
+      ws.onmessage = (evt) => {
+        try {
+          const payload = JSON.parse(evt.data)
+          if (payload?.type === 'snapshot_v2' && payload.data) {
+            const d = payload.data
+            setIntelligence(prev => ({
+              cii_scores: d.cii_scores || prev.cii_scores || [],
+              anomalies: d.anomalies || prev.anomalies || [],
+              focal_points: d.focal_points || prev.focal_points || [],
+              convergence_alerts: d.convergence_alerts || prev.convergence_alerts || [],
+              source_tier_summary: d.source_tier_summary || prev.source_tier_summary || {},
+            }))
+          }
+        } catch {
+          /* ignore malformed packets */
+        }
+      }
+      ws.onclose = () => {
+        setIntelStatus('intel_retry')
+        retry = setTimeout(connect, 6000)
+      }
+      ws.onerror = () => ws.close()
+    }
+
+    connect()
+    return () => {
+      if (ws) ws.close()
+      if (retry) clearTimeout(retry)
+    }
+  }, [])
+
   const fetchCountry = async (code) => {
     if (!code) return
     setCountryLoading(true)
@@ -282,6 +344,21 @@ export default function App() {
 
   const focusSignal = data.signals[0] || {}
   const signalSummary = data.signalSummary || computeSummary(data.signals)
+
+  // Source coverage dots from intelligence
+  const coverageDots = (() => {
+    const summary = intelligence.source_tier_summary || {}
+    const byTier = summary.by_tier || {}
+    return [
+      { tier: 1, count: byTier[1] || 0, color: 'var(--green)',   label: 'Premium' },
+      { tier: 2, count: byTier[2] || 0, color: 'var(--cyan)',    label: 'Standard' },
+      { tier: 3, count: byTier[3] || 0, color: 'var(--blue)',    label: 'Analytical' },
+      { tier: 4, count: byTier[4] || 0, color: 'var(--orange)',  label: 'State' },
+    ]
+  })()
+
+  const anomalyCount = intelligence.anomalies?.length || 0
+  const focalCount = intelligence.focal_points?.length || 0
 
   return (
     <div className="app-shell">
@@ -313,6 +390,25 @@ export default function App() {
           </div>
         </div>
 
+        {/* Intelligence counter */}
+        {(anomalyCount > 0 || focalCount > 0) && (
+          <div className="topbar-intel-counter">
+            <div className="gti-label">Intelligence</div>
+            <div className="intel-counter-pills">
+              {anomalyCount > 0 && (
+                <span className="intel-pill intel-pill--anomaly" title={`${anomalyCount} active anomalies`}>
+                  ⚡ {anomalyCount}
+                </span>
+              )}
+              {focalCount > 0 && (
+                <span className="intel-pill intel-pill--focal" title={`${focalCount} focal points`}>
+                  ◉ {focalCount}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         <nav className="topbar-nav">
           {VIEWS.map(v => (
             <button
@@ -324,8 +420,9 @@ export default function App() {
               {v === 'Earth Pulse' ? '🌍 Earth Pulse' :
                v === 'Geo Map'     ? '🗺 Geo Map' :
                v === 'AI Signals'  ? '✦ AI Signals' :
+               v === 'Intelligence' ? '◈ Intelligence' :
                v === 'Trading Signals' ? '📈 Trading Signals' :
-               v === 'Geo Risk Index' ? '⚠️ Geo Risk Index' :
+               v === 'Geo Risk Index' ? '⚠ Geo Risk Index' :
                v === 'Market Impact' ? '💥 Market Impact' :
                v === 'Portfolio'   ? '💼 Portfolio' :
                                      '📰 Live Feeds'}
@@ -337,6 +434,17 @@ export default function App() {
           <div className={`live-badge ${liveStatus === 'live' ? 'live' : 'muted'}`}>
             <span className="live-dot" />
             {liveStatus === 'live' ? 'LIVE' : 'SYNC'}
+          </div>
+          {/* Source coverage dots */}
+          <div className="coverage-dots" title={coverageDots.map(d => `${d.label}: ${d.count}`).join(' | ')}>
+            {coverageDots.map(d => (
+              <span
+                key={d.tier}
+                className="coverage-dot"
+                style={{ background: d.count > 0 ? d.color : 'var(--muted2)' }}
+                title={`${d.label}: ${d.count}`}
+              />
+            ))}
           </div>
           <div className="timeframe-toggle">
             <button className="tf-btn active">1MIN</button>
@@ -377,6 +485,9 @@ export default function App() {
         )}
         {activeView === 'AI Signals' && (
           <AISignalsView signals={data.signals} />
+        )}
+        {activeView === 'Intelligence' && (
+          <IntelligencePanel />
         )}
         {activeView === 'Trading Signals' && (
           <TradingSignalsPanel />

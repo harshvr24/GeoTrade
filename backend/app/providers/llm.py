@@ -45,7 +45,7 @@ class LLMProvider:
             return content, model_used
 
     def summarize(self, text: str) -> str:
-        return text[:220] + ("…" if len(text) > 220 else "")
+        return text[:220] + ("â€¦" if len(text) > 220 else "")
 
     def ner(self, text: str) -> List[Dict[str, Any]]:
         ents = []
@@ -115,4 +115,4 @@ class LLMProvider:
 
 
 async def get_llm_provider() -> LLMProvider:
-    return LLMProvider()
+    return LLMProvider()

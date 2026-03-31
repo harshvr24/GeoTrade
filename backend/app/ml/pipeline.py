@@ -11,6 +11,10 @@ import numpy as np
 from collections import Counter
 
 from ..news_integration import NewsIntegrator, NewsDataManager
+from ..processors.cii import CIICalculator
+from ..processors.anomaly import WelfordDetector
+from ..processors.signal_aggregator import SignalAggregator
+from ..providers.llm import LLMProvider
 
 SEVERITY_WEIGHT = {"critical": 83, "high": 70, "medium": 53, "low": 24}
 COUNTRY_COORDS = {
@@ -50,6 +54,16 @@ class LocalMLPipeline:
         self._cached_events: list[dict[str, Any]] | None = None
         self._cache_ts: datetime | None = None
         self.cache_ttl = timedelta(minutes=5)
+        # World Monitor processors — initialized once, reused across calls
+        self._cii = CIICalculator()
+        self._anomaly = WelfordDetector()
+        self._aggregator = SignalAggregator()
+        self._llm: LLMProvider | None = None
+
+    def _get_llm(self) -> LLMProvider:
+        if self._llm is None:
+            self._llm = LLMProvider()
+        return self._llm
 
     def load_events(self) -> list[dict[str, Any]]:
         """Load events from remote RSS feeds with fallback to curated data."""
@@ -73,8 +87,40 @@ class LocalMLPipeline:
             if curated:
                 events.extend(curated[:5])
 
+        # Inject source tier metadata from sources.yaml
+        events = self._enrich_with_source_tier(events)
+
         self._cached_events = events
         self._cache_ts = now
+        return events
+
+    def _enrich_with_source_tier(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Attach source_tier and state_affiliated from the sources registry."""
+        try:
+            from ..ingestion.sources import load_sources_registry
+            registry = load_sources_registry()
+            source_map: dict[str, dict[str, Any]] = {
+                s["id"]: s for s in registry if hasattr(s, "get")
+            }
+            for ev in events:
+                src_id = ev.get("source", "").lower().replace(" ", "-")
+                src_entry = source_map.get(src_id)
+                if not src_entry:
+                    # Try partial match
+                    for key, val in source_map.items():
+                        if key in src_id or src_id in key:
+                            src_entry = val
+                            break
+                if src_entry:
+                    ev["source_tier"] = src_entry.get("tier")
+                    ev["state_affiliated"] = src_entry.get("state_affiliated", False)
+                else:
+                    ev["source_tier"] = None
+                    ev["state_affiliated"] = False
+        except Exception:
+            for ev in events:
+                ev["source_tier"] = None
+                ev["state_affiliated"] = False
         return events
 
     def classify_event(self, text: str) -> str:
@@ -103,22 +149,21 @@ class LocalMLPipeline:
         """Simple clustering based on keyword frequency."""
         if not headlines:
             return []
-        
+
         clusters = []
         keywords_by_headline = []
-        
+
         for headline in headlines:
             words = set(headline.lower().split())
             keywords_by_headline.append(words)
-        
-        # Simple clustering: assign based on first keyword match
+
         cluster_keywords = [
             {"military", "defense", "naval", "border"},
             {"sanction", "embargo", "trade"},
             {"market", "economy", "equities", "price"},
             {"diplomatic", "talks", "agreement"},
         ]
-        
+
         for keywords in keywords_by_headline:
             best_cluster = 0
             best_match = 0
@@ -128,7 +173,7 @@ class LocalMLPipeline:
                     best_cluster = idx
                     best_match = matches
             clusters.append(best_cluster)
-        
+
         return clusters
 
     def score_event(self, event: dict[str, Any], sentiment: float) -> float:
@@ -152,12 +197,34 @@ class LocalMLPipeline:
         """Generate market signal score."""
         return 0.35 + 0.004 * gti + 0.5 * abs(vol_score) + 0.02 * gti / 100
 
+    async def _generate_brief(self, events: list[dict[str, Any]]) -> dict[str, Any]:
+        """Generate AI world brief. Falls back to heuristic if no LLM key."""
+        llm = self._get_llm()
+        try:
+            return await llm.synthesize_brief(events)
+        except Exception:
+            # Heuristic fallback
+            top = sorted(events, key=lambda e: e.get("severity", "low"), reverse=True)[:5]
+            critical = "; ".join([f"{e.get('country_code','GLOBAL')}: {e.get('headline','')}" for e in top])
+            return {
+                "brief": f"{critical}\n\nEnergy prices remain sensitive; FX mixed; risk assets cautious.\n\nMonitor escalation triggers, supply disruptions, and policy surprises in next 48h.",
+                "sections": {
+                    "critical": critical,
+                    "markets": "Energy prices remain sensitive; FX mixed; risk assets cautious.",
+                    "watchpoints": "Monitor escalation triggers, supply disruptions, and policy surprises in next 48h.",
+                },
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "source": "heuristic",
+                "cached": False,
+                "model": "heuristic",
+            }
+
     def process(self) -> dict[str, Any]:
-        """Process events and return dashboard data."""
+        """Process events and return dashboard data with World Monitor intelligence."""
         raw = self.load_events()
         if not raw:
             return self._empty_response()
-        
+
         headlines = [event["headline"] for event in raw]
         clusters = self.simple_cluster(headlines)
         processed: list[ProcessedEvent] = []
@@ -185,20 +252,89 @@ class LocalMLPipeline:
 
         signals = self._signals(gti, vol_score, processed)
         countries = self._countries(processed)
-        events = [self._event_payload(event) for event in processed]
+        events_out = [self._event_payload(event) for event in processed]
         focus_signal = next((s for s in signals if s["asset"] == "XAU/USD"), signals[0] if signals else {})
+
+        # World Monitor intelligence processors
+        events_for_intel = events_out
+        cii_results = self._cii.score_all(events_for_intel)
+        anomaly_alerts = self._anomaly.run_all_checks(events_for_intel)
+        agg_result = self._aggregator.aggregate(
+            events_for_intel,
+            military_tracks=[],
+            naval_tracks=[],
+        )
+
+        # Build CII country list
+        cii_countries = []
+        for code, result in cii_results.items():
+            cii_countries.append({
+                "code": code,
+                "score": result.score,
+                "risk_level": result.risk_level,
+                "trend": result.trend,
+            })
+        cii_countries.sort(key=lambda x: x["score"], reverse=True)
+
+        # Build focal points
+        focal_points = agg_result.get("focal_points", [])
+
+        # Build convergence alerts
+        convergence_alerts = agg_result.get("convergence_alerts", [])
+
+        # Build anomaly list
+        anomaly_list = [
+            {
+                "region": a.region,
+                "event_type": a.event_type,
+                "z_score": a.z_score,
+                "severity": a.severity,
+                "observed": a.observed,
+                "baseline_mean": a.baseline_mean,
+                "multiplier": a.multiplier,
+                "message": a.message,
+                "timestamp": a.timestamp,
+            }
+            for a in anomaly_alerts
+        ]
 
         return {
             "gti": gti,
             "gti_delta": 1.8,
             "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             "countries": countries,
-            "events": events,
+            "events": events_out,
             "signals": signals,
             "signal_summary": self._signal_summary(signals),
             "focus_signal": focus_signal,
             "arc_categories": ARC_TYPES,
             "waitlist_enabled": True,
+            # World Monitor intelligence fields
+            "cii_scores": cii_countries,
+            "anomalies": anomaly_list,
+            "focal_points": focal_points,
+            "convergence_alerts": convergence_alerts,
+            "intelligence_gaps": [],  # computed in api_v2 /gaps endpoint
+            "world_brief": None,  # populated asynchronously via /brief endpoint
+            "source_tier_summary": self._source_tier_summary(events_out),
+        }
+
+    def _source_tier_summary(self, events: list[dict[str, Any]]) -> dict[str, Any]:
+        """Summarize event count by source tier."""
+        tiers = {1: 0, 2: 0, 3: 0, 4: 0, None: 0}
+        state_affil = 0
+        for ev in events:
+            tier = ev.get("source_tier")
+            if tier in tiers:
+                tiers[tier] += 1
+            else:
+                tiers[None] = tiers.get(None, 0) + 1
+            if ev.get("state_affiliated"):
+                state_affil += 1
+        return {
+            "by_tier": tiers,
+            "state_affiliated_count": state_affil,
+            "total": len(events),
         }
 
     def _empty_response(self) -> dict[str, Any]:
@@ -214,6 +350,13 @@ class LocalMLPipeline:
             "focus_signal": {},
             "arc_categories": ARC_TYPES,
             "waitlist_enabled": True,
+            "cii_scores": [],
+            "anomalies": [],
+            "focal_points": [],
+            "convergence_alerts": [],
+            "intelligence_gaps": [],
+            "world_brief": None,
+            "source_tier_summary": {"by_tier": {1: 0, 2: 0, 3: 0, 4: 0, None: 0}, "state_affiliated_count": 0, "total": 0},
         }
 
     def _event_payload(self, event: ProcessedEvent) -> dict[str, Any]:
@@ -304,6 +447,9 @@ class LocalMLPipeline:
                     "risk_mod": f"{round(sig.get('market_impact', 0) * 1.3, 2)}%",
                     "risk_amount": round(0.02 * entry_price, 2) if isinstance(entry_price, (int, float)) else 0.0,
                     "reward_amount": round(0.04 * entry_price, 2) if isinstance(entry_price, (int, float)) else 0.0,
+                    # Source tier metadata
+                    "source_tier": event.payload.get("source_tier"),
+                    "state_affiliated": event.payload.get("state_affiliated", False),
                 }
             )
 
@@ -373,6 +519,8 @@ class LocalMLPipeline:
                     "risk_mod": f"{round(abs(move_pct) * 0.6, 2)}%",
                     "risk_amount": round(0.02 * asset_meta["price"], 2),
                     "reward_amount": round(0.04 * asset_meta["price"], 2),
+                    "source_tier": None,
+                    "state_affiliated": False,
                 }
             )
         return signals

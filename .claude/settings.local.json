@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''app/api_v2.py''\\).read\\(\\)\\); print\\(''api_v2.py OK''\\)\")"
+    ]
+  }
+}

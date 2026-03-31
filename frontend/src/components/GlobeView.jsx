@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import Globe from 'react-globe.gl'
+import { apiV2 } from '../api/v2'
 
 const RISK_COLORS = {
   critical: '#ef4444',
@@ -21,9 +22,29 @@ const COORDS = {
   IDN: [-0.8, 113.9], ETH: [9.1, 40.5],   VEN: [6.4, -66.6],
 }
 
+// Known strategic locations for convergence zones
+const CONVERGENCE_ZONES = [
+  { name: 'Strait of Hormuz',     lat: 26.6,  lng: 56.2,  radius: 2.5 },
+  { name: 'South China Sea',       lat: 12.0,  lng: 114.0, radius: 6.0 },
+  { name: 'Eastern Mediterranean', lat: 34.5,  lng: 33.0,  radius: 4.0 },
+  { name: 'Black Sea',             lat: 43.0,  lng: 34.0,  radius: 3.5 },
+  { name: 'Taiwan Strait',         lat: 24.5,  lng: 120.0, radius: 2.5 },
+  { name: 'Gulf of Aden',          lat: 12.5,  lng: 47.0,  radius: 3.5 },
+  { name: 'Suez Canal',            lat: 30.5,  lng: 32.4,  radius: 2.0 },
+  { name: 'Bab el-Mandeb',         lat: 12.6,  lng: 43.3,  radius: 2.0 },
+  { name: 'Korean Peninsula',      lat: 37.5,  lng: 127.5, radius: 4.0 },
+  { name: 'Persian Gulf',          lat: 26.0,  lng: 51.0,  radius: 4.0 },
+]
+
 export default function GlobeView({ countries, signals, focusSignal, onCountryClick }) {
   const containerRef = useRef(null)
   const [size, setSize] = useState({ w: 760, h: 560 })
+
+  // Intelligence overlay state
+  const [airTracks, setAirTracks] = useState([])
+  const [navalTracks, setNavalTracks] = useState([])
+  const [convergenceAlerts, setConvergenceAlerts] = useState([])
+  const [activeLayers, setActiveLayers] = useState(new Set(['conflicts', 'cii']))
 
   useEffect(() => {
     const el = containerRef.current
@@ -34,6 +55,32 @@ export default function GlobeView({ countries, signals, focusSignal, onCountryCl
     })
     ro.observe(el)
     return () => ro.disconnect()
+  }, [])
+
+  // Fetch intelligence overlay data
+  useEffect(() => {
+    let cancelled = false
+
+    const load = async () => {
+      try {
+        const [airData, seaData, convData] = await Promise.all([
+          apiV2.air().catch(() => ({ tracks: [] })),
+          apiV2.sea().catch(() => ({ tracks: [] })),
+          apiV2.convergence().catch(() => ({ convergence_alerts: [] })),
+        ])
+        if (!cancelled) {
+          setAirTracks(airData.tracks || [])
+          setNavalTracks(seaData.tracks || [])
+          setConvergenceAlerts(convData.convergence_alerts || [])
+        }
+      } catch {
+        // silently fail — overlay data is enhancement only
+      }
+    }
+
+    load()
+    const interval = setInterval(load, 60000) // refresh every minute
+    return () => { cancelled = true; clearInterval(interval) }
   }, [])
 
   const points = useMemo(() =>
@@ -95,8 +142,73 @@ export default function GlobeView({ countries, signals, focusSignal, onCountryCl
     ]
   }, [points])
 
+  // Air track arcs — military flight paths
+  const airArcs = useMemo(() => {
+    if (!activeLayers.has('aircraft') || !airTracks.length) return []
+    return airTracks.map(t => ({
+      startLat: t.lat || 0,
+      startLng: t.lng || 0,
+      endLat: t.dest_lat || t.lat || 0,
+      endLng: t.dest_lng || t.lng || 0,
+      color: ['#ff6b35', '#ff6b35'],
+      dashLength: 0.5,
+      dashGap: 0.3,
+      stroke: 0.8,
+    }))
+  }, [airTracks, activeLayers])
+
+  // Naval vessel points
+  const navalPoints = useMemo(() => {
+    if (!activeLayers.has('ships') || !navalTracks.length) return []
+    return navalTracks.map(v => ({
+      lat: v.lat || 0,
+      lng: v.lng || 0,
+      color: '#00bcd4',
+      size: 0.3,
+      label: v.name || v.callsign || v.flag || 'Vessel',
+    }))
+  }, [navalTracks, activeLayers])
+
+  // Convergence zone circles
+  const convergenceRings = useMemo(() => {
+    if (!activeLayers.has('convergence') || !convergenceAlerts.length) return []
+    // Use convergence alert coordinates, fall back to known zones
+    const alerts = convergenceAlerts.slice(0, 5).map(a => ({
+      lat: a.lat || 0,
+      lng: a.lng || 0,
+      name: a.name || a.cell_key || 'Zone',
+      score: a.score || 0,
+      color: a.severity === 'critical' ? '#ff4444' : a.severity === 'high' ? '#ff8c00' : '#ffd600',
+    }))
+    // Fill remaining from known zones
+    const zoneNames = new Set(alerts.map(a => a.name))
+    for (const zone of CONVERGENCE_ZONES) {
+      if (alerts.length >= 8) break
+      if (!zoneNames.has(zone.name)) {
+        alerts.push({ ...zone, score: 0, color: '#ffd600' })
+      }
+    }
+    return alerts
+  }, [convergenceAlerts, activeLayers])
+
   const spxSignal  = signals?.find(s => s.asset === 'SPX')
   const hasFocus   = focusSignal && focusSignal.asset
+
+  const toggleLayer = (id) => {
+    setActiveLayers(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  const LAYER_OPTIONS = [
+    { id: 'conflicts',    label: 'Conflicts',     color: 'var(--red)' },
+    { id: 'cii',          label: 'CII Choropleth',color: 'var(--cyan)' },
+    { id: 'aircraft',     label: 'Air Tracks',    color: '#ff6b35' },
+    { id: 'ships',        label: 'Naval Vessels', color: '#00bcd4' },
+    { id: 'convergence',  label: 'Convergence',   color: 'var(--yellow)' },
+  ]
 
   return (
     <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
@@ -105,6 +217,20 @@ export default function GlobeView({ countries, signals, focusSignal, onCountryCl
         <div className="globe-overlay-bar">
           <span>● LIVE</span>
           &nbsp;Global GTI&nbsp;<span>{71.4}</span>
+        </div>
+
+        {/* Layer toggles */}
+        <div className="globe-layer-toggles">
+          {LAYER_OPTIONS.map(l => (
+            <button
+              key={l.id}
+              className={`globe-layer-btn ${activeLayers.has(l.id) ? 'active' : ''}`}
+              onClick={() => toggleLayer(l.id)}
+              style={{ '--layer-color': l.color }}
+            >
+              {l.label}
+            </button>
+          ))}
         </div>
 
         <Globe
@@ -118,7 +244,7 @@ export default function GlobeView({ countries, signals, focusSignal, onCountryCl
           pointsData={showSpikes ? points : []}
           pointColor="color"
           pointAltitude={showSpikes ? "size" : () => 0}
-          pointRadius={showSpikes ? 0.5 : 0}
+          pointRadius="size"
           pointLabel={p => `<div style="background:#0c1420;border:1px solid rgba(255,255,255,0.1);padding:6px 10px;border-radius:6px;font-size:12px"><b>${p.name}</b> · ${p.region}<br/><span style="color:${p.color}">Risk ${p.risk} — ${p.level.toUpperCase()}</span></div>`}
           onPointClick={p => onCountryClick(p)}
           arcsData={arcs}
@@ -128,6 +254,23 @@ export default function GlobeView({ countries, signals, focusSignal, onCountryCl
           arcDashAnimateTime={2600}
           arcStroke={1.15}
           arcAltitudeAutoScale={0.5}
+          // Air track arcs overlay
+          arcsData2={activeLayers.has('aircraft') ? airArcs : []}
+          arcColor2={'color'}
+          arcDashLength2={'dashLength'}
+          arcDashGap2={'dashGap'}
+          arcStroke2={0.8}
+          // Naval vessel points
+          pointsData2={activeLayers.has('ships') ? navalPoints : []}
+          pointColor2="color"
+          pointRadius2="size"
+          pointLabel2={p => `<div style="background:#0c1420;border:1px solid rgba(0,188,212,0.3);padding:4px 8px;border-radius:4px;font-size:11px;color:#00bcd4"><b>${p.label}</b></div>`}
+          // Convergence zone rings
+          ringsData={activeLayers.has('convergence') ? convergenceRings : []}
+          ringColor={() => 'color'}
+          ringRadius={1.2}
+          ringPropagationSpeed={0}
+          ringOpacity={0.6}
         />
 
         <div className="risk-legend">

@@ -96,40 +96,69 @@ export default function AISignalsView({ signals }) {
               No signals match filter
             </div>
           )}
-          {filtered.map(s => (
-            <div
-              key={s.id}
-              className={`slp-item ${selectedId === s.id ? 'active' : ''}`}
-              onClick={() => { setSelectedId(s.id); setActiveTab('Trade Setup') }}
-            >
-              <div className="slp-item-top">
-                <span className="slp-asset">{s.asset}</span>
-                <span className={`slp-conf ${s.action === 'BUY' ? 'pos' : s.action === 'SELL' ? 'neg' : 'neu'}`}>
-                  {Math.round(s.confidence * 100)}%
-                </span>
-              </div>
-              <div className="slp-cat">
-                {s.category} · {s.changeP || s.move || ''}
-              </div>
-              <div className="slp-bars">
-                <div className="slp-bar-row">
-                  <span className="slp-bar-label">Bull</span>
-                  <div className="slp-bar-bg">
-                    <div className="slp-bar-fill"
-                      style={{ width: `${s.bullStrength}%`, background: 'var(--green)' }} />
+          {filtered.map(s => {
+            const tier = s.source_tier
+            const isStateAffil = s.state_affiliated
+            const anomalyFlag = s.anomaly_flag
+            const focalFlag = s.focal_point
+
+            return (
+              <div
+                key={s.id}
+                className={`slp-item ${selectedId === s.id ? 'active' : ''}`}
+                onClick={() => { setSelectedId(s.id); setActiveTab('Trade Setup') }}
+              >
+                <div className="slp-item-top">
+                  <span className="slp-asset">{s.asset}</span>
+                  <span className={`slp-conf ${s.action === 'BUY' ? 'pos' : s.action === 'SELL' ? 'neg' : 'neu'}`}>
+                    {Math.round(s.confidence * 100)}%
+                  </span>
+                  {/* Intelligence badges */}
+                  {focalFlag && (
+                    <span className="slp-intel-badge slp-badge--focal" title="Focal point — multi-domain convergence">◉</span>
+                  )}
+                  {anomalyFlag && (
+                    <span className="slp-intel-badge slp-badge--anomaly" title="Anomaly detected in region">⚡</span>
+                  )}
+                  {isStateAffil && (
+                    <span className="slp-intel-badge slp-badge--state" title="Source: state-affiliated media">⚠</span>
+                  )}
+                </div>
+                <div className="slp-cat">
+                  {s.category} · {s.changeP || s.move || ''}
+                  {/* Tier badge */}
+                  {tier && (
+                    <span
+                      className="slp-tier-badge"
+                      style={{
+                        background: tier === 1 ? 'var(--green)' : tier === 2 ? 'var(--cyan)' : tier === 3 ? 'var(--blue)' : 'var(--orange)',
+                        color: tier <= 2 ? '#000' : '#fff',
+                      }}
+                    >
+                      T{tier}
+                    </span>
+                  )}
+                </div>
+                <div className="slp-bars">
+                  <div className="slp-bar-row">
+                    <span className="slp-bar-label">Bull</span>
+                    <div className="slp-bar-bg">
+                      <div className="slp-bar-fill"
+                        style={{ width: `${s.bullStrength}%`, background: 'var(--green)' }} />
+                    </div>
+                  </div>
+                  <div className="slp-bar-row">
+                    <span className="slp-bar-label">Bear</span>
+                    <div className="slp-bar-bg">
+                      <div className="slp-bar-fill"
+                        style={{ width: `${s.bearStrength}%`, background: 'var(--red)' }} />
+                    </div>
                   </div>
                 </div>
-                <div className="slp-bar-row">
-                  <span className="slp-bar-label">Bear</span>
-                  <div className="slp-bar-bg">
-                    <div className="slp-bar-fill"
-                      style={{ width: `${s.bearStrength}%`, background: 'var(--red)' }} />
-                  </div>
-                </div>
+                <div className="slp-trigger">▸ {s.trigger}</div>
               </div>
-              <div className="slp-trigger">▸ {s.trigger}</div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 
@@ -144,8 +173,38 @@ export default function AISignalsView({ signals }) {
                 <span className={`action-badge ${selected.action.toLowerCase()}`}>
                   {selected.action}
                 </span>
+                {/* Intelligence badges in detail header */}
+                {selected.focal_point && (
+                  <span className="sdp-intel-badge sdp-badge--focal">◉ Focal Point</span>
+                )}
+                {selected.anomaly_flag && (
+                  <span className="sdp-intel-badge sdp-badge--anomaly">⚡ Anomaly</span>
+                )}
+                {selected.state_affiliated && (
+                  <span className="sdp-intel-badge sdp-badge--state">⚠ State Source</span>
+                )}
+                {selected.source_tier && (
+                  <span
+                    className="sdp-tier-badge"
+                    style={{
+                      background: selected.source_tier === 1 ? 'var(--green)' : selected.source_tier === 2 ? 'var(--cyan)' : selected.source_tier === 3 ? 'var(--blue)' : 'var(--orange)',
+                      color: selected.source_tier <= 2 ? '#000' : '#fff',
+                    }}
+                  >
+                    T{selected.source_tier} · {selected.source_tier === 1 ? 'Premium' : selected.source_tier === 2 ? 'Standard' : selected.source_tier === 3 ? 'Analytical' : 'State'}
+                  </span>
+                )}
               </div>
               <div className="sdp-asset-sub">{selected.category}</div>
+              {/* CII score if available */}
+              {selected.cii_score != null && (
+                <div className="sdp-cii-row">
+                  <span className="sdp-cii-label">CII:</span>
+                  <span className={`sdp-cii-value ${selected.cii_level?.toLowerCase()}`}>
+                    {selected.cii_score.toFixed(1)} ({selected.cii_level})
+                  </span>
+                </div>
+              )}
               <div className="sdp-asset-sub" style={{ marginTop: 2 }}>{selected.rationale}</div>
             </div>
             <div className="sdp-right">
@@ -274,6 +333,34 @@ export default function AISignalsView({ signals }) {
                   <b style={{ color: 'var(--text)' }}>Triggering event:</b> {selected.trigger}.<br />
                   {selected.triggerSub}
                 </div>
+                {/* Intelligence metadata */}
+                {(selected.focal_point || selected.anomaly_flag || selected.source_tier) && (
+                  <div style={{ marginTop: 4 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--yellow)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>
+                      Intelligence Context
+                    </div>
+                    {selected.focal_point && (
+                      <div style={{ fontSize: 11, color: 'var(--cyan)', paddingLeft: 12, marginBottom: 4 }}>
+                        ◉ Focal point — entity appears across multiple intelligence streams
+                      </div>
+                    )}
+                    {selected.anomaly_flag && (
+                      <div style={{ fontSize: 11, color: 'var(--orange)', paddingLeft: 12, marginBottom: 4 }}>
+                        ⚡ Anomaly detected — event rate statistically unusual for this region
+                      </div>
+                    )}
+                    {selected.source_tier && (
+                      <div style={{ fontSize: 11, color: 'var(--muted2)', paddingLeft: 12, marginBottom: 4 }}>
+                        Source tier: T{selected.source_tier} · {selected.state_affiliated ? '⚠ State-affiliated media' : 'Independent source'}
+                      </div>
+                    )}
+                    {selected.cii_score != null && (
+                      <div style={{ fontSize: 11, color: 'var(--muted2)', paddingLeft: 12 }}>
+                        CII score: {selected.cii_score.toFixed(1)} ({selected.cii_level}) — Country instability index
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div>
                   <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--orange)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>⚠ Risk Flags</div>
                   {selected.riskFlags.map(f => (

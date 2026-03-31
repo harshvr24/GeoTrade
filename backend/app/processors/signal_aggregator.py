@@ -78,7 +78,7 @@ def _haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 
 
 def _reverse_geocode(lat: float, lng: float) -> str:
-    best_name = f"Grid ({lat:.1f}°, {lng:.1f}°)"
+    best_name = f"Grid ({lat:.1f}Â°, {lng:.1f}Â°)"
     best_dist = float("inf")
     for area in KNOWN_AREAS:
         dist = _haversine(lat, lng, area["lat"], area["lng"])

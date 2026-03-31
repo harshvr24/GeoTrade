@@ -5,7 +5,7 @@ Maintains numerically stable rolling mean and variance for event counts
 per (region, event_type, weekday, month) combination. Detects statistically
 significant deviations from learned baselines.
 
-Algorithm: Welford (1962) — single-pass, numerically stable.
+Algorithm: Welford (1962) -- single-pass, numerically stable.
 Reference: https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Welford's_online_algorithm
 
 Thresholds:
